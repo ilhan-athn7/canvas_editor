@@ -82,7 +82,7 @@
       <div class="stage-toolbar">
         <div><strong>Canvas</strong> <span class="muted">(resize the panel using the bottom-right handle)</span></div>
         <div class="controls">
-          <button id="export" class="btn primary">Export PNG</button>
+          <button id="export" class="btn primary">Export JPEG</button>
         </div>
       </div>
 
@@ -362,7 +362,7 @@
       });
     }
 
-    // export canvas to PNG using HTML2Canvas-like approach (draw images to an offscreen canvas)
+    // export canvas to JPEG using HTML2Canvas-like approach (draw images to an offscreen canvas)
     exportBtn.addEventListener('click', async ()=>{
       const w = canvas.offsetWidth, h = canvas.offsetHeight;
       const out = document.createElement('canvas'); out.width = w; out.height = h;
@@ -412,8 +412,8 @@
         }
       }
       ctx.globalAlpha = 1;
-      const data = out.toDataURL('image/png');
-      const a = document.createElement('a'); a.href = data; a.download = 'canvas-export.png'; a.click();
+      const data = out.toDataURL('image/jpeg');
+      const a = document.createElement('a'); a.href = data; a.download = 'canvas-export.jpg'; a.click();
 
       if(failedCount) alert(failedCount + ' image(s) failed to load or were corrupted and were replaced by placeholders in the export.');
     });
