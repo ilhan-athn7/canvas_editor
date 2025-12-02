@@ -438,11 +438,6 @@
 
     clearBtn.addEventListener('click', ()=>{ items.forEach(it=>canvas.removeChild(it.el)); items=[]; selected=null; selInfo.textContent='none'; });
 
-    // initial demo items (one valid, one intentionally invalid to test error handling)
-    createItem('https://via.placeholder.com/640x360.png?text=Valid+image');
-    // broken URL to test error handling — export should draw placeholder and not throw.
-    createItem('https://example.com/nonexistent-image-should-404.png', {x:320,y:100});
-
   </script>
 </body>
 </html>
