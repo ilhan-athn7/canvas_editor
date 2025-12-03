@@ -129,7 +129,7 @@
         // scale down if bigger than default
         const naturalW = img.naturalWidth, naturalH = img.naturalHeight;
         if(!opts.w && !opts.h && naturalW && naturalH){
-          const maxW = 400; const maxH = 300;
+          const maxW = 800; const maxH = 600;
           let w = naturalW, h = naturalH;
           const scale = Math.min(1, maxW/w, maxH/h);
           wrapper.style.width = Math.round(w*scale)+'px';
