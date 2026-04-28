@@ -421,7 +421,7 @@
 <header>
   <div class="logo">canvas<span>board</span></div>
   <div class="toolbar">
-    <span class="hint">Click canvas to deselect</span>
+    <span class="hint">Tap to select · Pinch to resize/rotate</span>
     <button class="btn" onclick="document.getElementById('file-input').click()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Add Photo
@@ -563,43 +563,9 @@ function addPhoto(src, name) {
   img.src = src;
 }
 
-// ─── HELPERS: unified pointer coords ──────────────────
-function clientXY(e) {
-  if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  if (e.changedTouches && e.changedTouches.length > 0) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
-  return { x: e.clientX, y: e.clientY };
-}
-
-function dist(t1, t2) {
-  return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-}
-
-function midpoint(t1, t2) {
-  return { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
-}
-
-function touchAngle(t1, t2) {
-  return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * 180 / Math.PI;
-}
-
-// ─── ADD/REMOVE LISTENERS (mouse + touch) ─────────────
-function addMoveUp(onMove, onUp) {
-  // Mouse
-  document.addEventListener('mousemove', onMove);
-  document.addEventListener('mouseup', onUp);
-  // Touch
-  document.addEventListener('touchmove', onMove, { passive: false });
-  document.addEventListener('touchend', onUp);
-  document.addEventListener('touchcancel', onUp);
-}
-
-function removeMoveUp(onMove, onUp) {
-  document.removeEventListener('mousemove', onMove);
-  document.removeEventListener('mouseup', onUp);
-  document.removeEventListener('touchmove', onMove);
-  document.removeEventListener('touchend', onUp);
-  document.removeEventListener('touchcancel', onUp);
-}
+// ─── POINTER EVENT ENGINE ─────────────────────────────
+function pDist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+function pAngle(a, b) { return Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI; }
 
 // ─── CREATE DOM ELEMENT ───────────────────────────────
 function createPhotoEl(data) {
@@ -626,15 +592,17 @@ function createPhotoEl(data) {
   del.className = 'photo-delete';
   del.innerHTML = '×';
   del.title = 'Remove';
-  del.addEventListener('mousedown', e => { e.stopPropagation(); removePhoto(data); });
-  del.addEventListener('touchstart', e => { e.stopPropagation(); e.preventDefault(); removePhoto(data); }, { passive: false });
+  del.addEventListener('pointerdown', e => { e.stopPropagation(); removePhoto(data); });
 
   // resize handles
   ['nw','ne','sw','se'].forEach(dir => {
     const h = document.createElement('div');
     h.className = `resize-handle ${dir}`;
-    h.addEventListener('mousedown', e => startResize(e, data, dir));
-    h.addEventListener('touchstart', e => startResize(e, data, dir), { passive: false });
+    h.addEventListener('pointerdown', e => {
+      e.stopPropagation();
+      h.setPointerCapture(e.pointerId);
+      startResize(e, data, dir, h);
+    });
     div.appendChild(h);
   });
 
@@ -642,31 +610,117 @@ function createPhotoEl(data) {
   const rot = document.createElement('div');
   rot.className = 'rotate-handle';
   rot.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>`;
-  rot.addEventListener('mousedown', e => startRotate(e, data));
-  rot.addEventListener('touchstart', e => startRotate(e, data), { passive: false });
+  rot.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    rot.setPointerCapture(e.pointerId);
+    startRotate(e, data, rot);
+  });
   div.appendChild(rot);
 
   div.appendChild(frame);
   div.appendChild(del);
 
-  // move (single touch) / pinch-zoom+rotate (two touches on the item)
-  div.addEventListener('mousedown', e => {
-    if (e.target.classList.contains('resize-handle') || e.target.classList.contains('rotate-handle') || e.target.classList.contains('photo-delete')) return;
-    selectPhoto(data);
-    startMove(e, data);
-  });
-
-  div.addEventListener('touchstart', e => {
-    if (e.target.classList.contains('resize-handle') || e.target.classList.contains('rotate-handle') || e.target.classList.contains('photo-delete')) return;
-    selectPhoto(data);
-    if (e.touches.length === 2) {
-      startPinch(e, data);
-    } else {
-      startMove(e, data);
-    }
-  }, { passive: false });
+  // Main photo interaction: move (1 pointer) or pinch/rotate (2 pointers)
+  attachPhotoPointers(div, data);
 
   return div;
+}
+
+function attachPhotoPointers(div, data) {
+  // Per-element pointer state
+  const ptrs = new Map(); // pointerId -> {x, y}
+
+  function onPointerDown(e) {
+    if (e.target.classList.contains('resize-handle') ||
+        e.target.classList.contains('rotate-handle') ||
+        e.target.classList.contains('photo-delete')) return;
+
+    e.preventDefault();
+    div.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    selectPhoto(data);
+
+    // Snapshot state for gesture
+    data._gestureSnap = {
+      x: data.x, y: data.y, w: data.w, h: data.h, rot: data.rot,
+      ptrs: new Map([...ptrs].map(([id, p]) => [id, { ...p }]))
+    };
+  }
+
+  function onPointerMove(e) {
+    if (!ptrs.has(e.pointerId)) return;
+    e.preventDefault();
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    const snap = data._gestureSnap;
+    if (!snap) return;
+
+    const ids = [...ptrs.keys()];
+
+    if (ids.length === 1) {
+      // ── MOVE ──
+      const id = ids[0];
+      const s = snap.ptrs.get(id);
+      if (!s) return;
+      const dx = ptrs.get(id).x - s.x;
+      const dy = ptrs.get(id).y - s.y;
+      data.x = snap.x + dx;
+      data.y = snap.y + dy;
+      data.el.style.left = data.x + 'px';
+      data.el.style.top = data.y + 'px';
+      statusPos.textContent = `x:${Math.round(data.x)} y:${Math.round(data.y)}`;
+
+    } else if (ids.length >= 2) {
+      // ── PINCH: scale + rotate ──
+      const [id0, id1] = ids;
+      const s0 = snap.ptrs.get(id0), s1 = snap.ptrs.get(id1);
+      if (!s0 || !s1) return;
+      const c0 = ptrs.get(id0), c1 = ptrs.get(id1);
+
+      const startD = pDist(s0, s1);
+      const currD = pDist(c0, c1);
+      const scale = startD > 0 ? currD / startD : 1;
+
+      const startA = pAngle(s0, s1);
+      const currA = pAngle(c0, c1);
+      const dRot = currA - startA;
+
+      data.w = Math.max(60, Math.round(snap.w * scale));
+      data.h = Math.max(60, Math.round(snap.h * scale));
+      data.rot = Math.round(snap.rot + dRot);
+
+      // Move by midpoint delta
+      const sMid = { x: (s0.x + s1.x) / 2, y: (s0.y + s1.y) / 2 };
+      const cMid = { x: (c0.x + c1.x) / 2, y: (c0.y + c1.y) / 2 };
+      data.x = snap.x + (cMid.x - sMid.x);
+      data.y = snap.y + (cMid.y - sMid.y);
+
+      data.el.style.left = data.x + 'px';
+      data.el.style.top = data.y + 'px';
+      data.el.style.width = data.w + 'px';
+      data.el.style.height = data.h + 'px';
+      data.el.style.transform = `rotate(${data.rot}deg)`;
+
+      document.getElementById('rotation-slider').value = Math.max(-180, Math.min(180, data.rot));
+      document.getElementById('rotation-val').textContent = data.rot + '°';
+      statusPos.textContent = `${data.w}×${data.h}`;
+    }
+  }
+
+  function onPointerUp(e) {
+    ptrs.delete(e.pointerId);
+    // Re-snapshot when a finger is lifted so remaining finger becomes new base
+    data._gestureSnap = {
+      x: data.x, y: data.y, w: data.w, h: data.h, rot: data.rot,
+      ptrs: new Map([...ptrs].map(([id, p]) => [id, { ...p }]))
+    };
+    if (ptrs.size === 0) data._gestureSnap = null;
+  }
+
+  div.addEventListener('pointerdown', onPointerDown);
+  div.addEventListener('pointermove', onPointerMove);
+  div.addEventListener('pointerup', onPointerUp);
+  div.addEventListener('pointercancel', onPointerUp);
 }
 
 // ─── SELECT ───────────────────────────────────────────
@@ -688,101 +742,22 @@ function selectPhoto(data) {
   updateLayers();
 }
 
-wrap.addEventListener('mousedown', e => {
-  if (e.target === wrap || e.target.id === 'canvas-wrap' || e.target === dropHint || e.target.tagName === 'P' || e.target.closest('#drop-hint')) {
+wrap.addEventListener('pointerdown', e => {
+  if (e.target === wrap || e.target.id === 'canvas-wrap' || e.target === dropHint ||
+      e.target.tagName === 'P' || e.target.closest('#drop-hint')) {
     selectPhoto(null);
   }
 });
 
-wrap.addEventListener('touchstart', e => {
-  if (e.target === wrap || e.target.id === 'canvas-wrap' || e.target === dropHint || e.target.tagName === 'P' || e.target.closest('#drop-hint')) {
-    selectPhoto(null);
-  }
-}, { passive: true });
-
-// ─── MOVE ─────────────────────────────────────────────
-function startMove(e, data) {
-  e.preventDefault();
-  const p = clientXY(e);
-  const ox = p.x - data.x, oy = p.y - data.y;
-
-  const onMove = ev => {
-    ev.preventDefault();
-    // If two fingers appear mid-drag, switch to pinch
-    if (ev.touches && ev.touches.length === 2) {
-      removeMoveUp(onMove, onUp);
-      startPinch(ev, data);
-      return;
-    }
-    const p2 = clientXY(ev);
-    data.x = p2.x - ox;
-    data.y = p2.y - oy;
-    data.el.style.left = data.x + 'px';
-    data.el.style.top = data.y + 'px';
-    statusPos.textContent = `x:${Math.round(data.x)} y:${Math.round(data.y)}`;
-  };
-  const onUp = () => removeMoveUp(onMove, onUp);
-  addMoveUp(onMove, onUp);
-}
-
-// ─── PINCH: two-finger resize + rotate ────────────────
-function startPinch(e, data) {
-  e.preventDefault();
-  const t = e.touches;
-  const startDist = dist(t[0], t[1]);
-  const startAngleVal = touchAngle(t[0], t[1]);
-  const startW = data.w, startH = data.h;
-  const startRot = data.rot;
-
-  const onMove = ev => {
-    if (!ev.touches || ev.touches.length < 2) return;
-    ev.preventDefault();
-    const tt = ev.touches;
-    const newDist = dist(tt[0], tt[1]);
-    const newAngle = touchAngle(tt[0], tt[1]);
-
-    const scaleRatio = newDist / startDist;
-    data.w = Math.max(60, Math.round(startW * scaleRatio));
-    data.h = Math.max(60, Math.round(startH * scaleRatio));
-    data.el.style.width = data.w + 'px';
-    data.el.style.height = data.h + 'px';
-
-    data.rot = Math.round(startRot + newAngle - startAngleVal);
-    data.el.style.transform = `rotate(${data.rot}deg)`;
-
-    if (selected === data) {
-      document.getElementById('rotation-slider').value = Math.max(-180, Math.min(180, data.rot));
-      document.getElementById('rotation-val').textContent = data.rot + '°';
-    }
-    statusPos.textContent = `${data.w}×${data.h}`;
-  };
-
-  const onUp = ev => {
-    if (ev.touches && ev.touches.length === 1) {
-      removeMoveUp(onMove, onUp);
-      startMove(ev, data);
-    } else if (!ev.touches || ev.touches.length === 0) {
-      removeMoveUp(onMove, onUp);
-    }
-  };
-
-  document.addEventListener('touchmove', onMove, { passive: false });
-  document.addEventListener('touchend', onUp);
-  document.addEventListener('touchcancel', onUp);
-}
-
 // ─── RESIZE (handle drag) ─────────────────────────────
-function startResize(e, data, dir) {
-  e.preventDefault(); e.stopPropagation();
+function startResize(e, data, dir, handle) {
   selectPhoto(data);
-  const p = clientXY(e);
-  const startX = p.x, startY = p.y;
+  const startX = e.clientX, startY = e.clientY;
   const startW = data.w, startH = data.h, startLeft = data.x, startTop = data.y;
 
-  const onMove = ev => {
-    ev.preventDefault();
-    const p2 = clientXY(ev);
-    const dx = p2.x - startX, dy = p2.y - startY;
+  function onMove(ev) {
+    if (ev.pointerId !== e.pointerId) return;
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
     let nw = startW, nh = startH, nx = startLeft, ny = startTop;
 
     if (dir.includes('e')) nw = Math.max(60, startW + dx);
@@ -796,31 +771,46 @@ function startResize(e, data, dir) {
     data.el.style.left = nx + 'px';
     data.el.style.top = ny + 'px';
     statusPos.textContent = `${Math.round(nw)}×${Math.round(nh)}`;
-  };
-  const onUp = () => removeMoveUp(onMove, onUp);
-  addMoveUp(onMove, onUp);
+  }
+
+  function onUp(ev) {
+    if (ev.pointerId !== e.pointerId) return;
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('pointercancel', onUp);
+  }
+
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('pointercancel', onUp);
 }
 
 // ─── ROTATE (handle drag) ─────────────────────────────
-function startRotate(e, data) {
-  e.preventDefault(); e.stopPropagation();
+function startRotate(e, data, handle) {
   const rect = data.el.getBoundingClientRect();
   const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
-  const p = clientXY(e);
-  const startAngle = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI;
+  const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
   const startRot = data.rot;
 
-  const onMove = ev => {
-    ev.preventDefault();
-    const p2 = clientXY(ev);
-    const a = Math.atan2(p2.y - cy, p2.x - cx) * 180 / Math.PI;
+  function onMove(ev) {
+    if (ev.pointerId !== e.pointerId) return;
+    const a = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI;
     data.rot = Math.round(startRot + a - startAngle);
     data.el.style.transform = `rotate(${data.rot}deg)`;
     document.getElementById('rotation-slider').value = Math.max(-180, Math.min(180, data.rot));
     document.getElementById('rotation-val').textContent = data.rot + '°';
-  };
-  const onUp = () => removeMoveUp(onMove, onUp);
-  addMoveUp(onMove, onUp);
+  }
+
+  function onUp(ev) {
+    if (ev.pointerId !== e.pointerId) return;
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    handle.removeEventListener('pointercancel', onUp);
+  }
+
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
+  handle.addEventListener('pointercancel', onUp);
 }
 
 // ─── CONTROLS ─────────────────────────────────────────
