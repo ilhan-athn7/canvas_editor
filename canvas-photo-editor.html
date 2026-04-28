@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Canvas Photo Board</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0e0e10;
+    --surface: #1a1a1f;
+    --border: #2e2e38;
+    --accent: #d4ff3e;
+    --accent2: #ff6b35;
+    --text: #f0f0f0;
+    --muted: #6b6b7a;
+    --canvas-bg: #111116;
+  }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.2rem;
+    letter-spacing: -0.03em;
+    color: var(--accent);
+  }
+
+  .logo span { color: var(--text); }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .btn.primary {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+
+  .btn.primary:hover { background: #c0f020; border-color: #c0f020; color: #000; }
+
+  .btn svg { flex-shrink: 0; }
+
+  .hint {
+    font-size: 0.68rem;
+    color: var(--muted);
+  }
+
+  /* MAIN */
+  main {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* CANVAS AREA */
+  #canvas-wrap {
+    flex: 1;
+    background: var(--canvas-bg);
+    position: relative;
+    overflow: hidden;
+    cursor: default;
+  }
+
+  /* Grid pattern on canvas bg */
+  #canvas-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  #canvas-wrap.drag-over {
+    outline: 2px dashed var(--accent);
+    outline-offset: -4px;
+  }
+
+  /* DROP HINT */
+  #drop-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    gap: 12px;
+    transition: opacity 0.3s;
+  }
+
+  #drop-hint .icon {
+    width: 64px;
+    height: 64px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+  }
+
+  #drop-hint p {
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  #drop-hint strong { color: var(--text); }
+
+  /* IMAGES ON CANVAS */
+  .photo-item {
+    position: absolute;
+    cursor: grab;
+    user-select: none;
+    transform-origin: center center;
+  }
+
+  .photo-item:active { cursor: grabbing; }
+
+  .photo-item.selected .photo-frame {
+    outline: 2px solid var(--accent);
+    outline-offset: 0px;
+  }
+
+  .photo-frame {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .photo-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+  }
+
+  /* DELETE BUTTON */
+  .photo-delete {
+    position: absolute;
+    top: -10px;
+    right: -10px;
+    width: 22px;
+    height: 22px;
+    background: var(--accent2);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+  }
+
+  .photo-item.selected .photo-delete { opacity: 1; }
+
+  /* RESIZE HANDLE */
+  .resize-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .photo-item.selected .resize-handle { opacity: 1; }
+
+  .resize-handle.se {
+    bottom: -7px;
+    right: -7px;
+    cursor: se-resize;
+  }
+
+  .resize-handle.sw {
+    bottom: -7px;
+    left: -7px;
+    cursor: sw-resize;
+  }
+
+  .resize-handle.ne {
+    top: -7px;
+    right: -7px;
+    cursor: ne-resize;
+  }
+
+  .resize-handle.nw {
+    top: -7px;
+    left: -7px;
+    cursor: nw-resize;
+  }
+
+  /* SIDE PANEL */
+  #panel {
+    width: 220px;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+  }
+
+  .panel-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* LAYER LIST */
+  #layer-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .layer-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    font-size: 0.72rem;
+    color: var(--muted);
+    transition: all 0.12s;
+  }
+
+  .layer-item:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+
+  .layer-item.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(212,255,62,0.06);
+  }
+
+  .layer-thumb {
+    width: 32px;
+    height: 32px;
+    object-fit: cover;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .layer-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* CONTROLS */
+  .control-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .control-row label {
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .control-row .val {
+    font-size: 0.7rem;
+    color: var(--accent);
+    min-width: 40px;
+    text-align: right;
+  }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--accent);
+    margin-top: 4px;
+  }
+
+  /* BG COLOR */
+  .color-swatches {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.12s, border-color 0.12s;
+  }
+
+  .swatch:hover { transform: scale(1.1); }
+  .swatch.active { border-color: var(--accent); }
+
+  /* STATUS BAR */
+  #statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 16px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.65rem;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+
+  /* hidden file input */
+  #file-input { display: none; }
+
+  /* empty layer msg */
+  #no-layers {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-align: center;
+    padding: 12px 0;
+  }
+
+  /* Rotation handle */
+  .rotate-handle {
+    position: absolute;
+    top: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 18px;
+    height: 18px;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .photo-item.selected .rotate-handle { opacity: 1; }
+
+  .rotate-handle svg { pointer-events: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">canvas<span>board</span></div>
+  <div class="toolbar">
+    <span class="hint">Click canvas to deselect</span>
+    <button class="btn" onclick="document.getElementById('file-input').click()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Add Photo
+    </button>
+    <button class="btn" onclick="clearCanvas()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+      Clear
+    </button>
+    <button class="btn primary" onclick="saveCanvas()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Save Image
+    </button>
+  </div>
+</header>
+
+<main>
+  <div id="canvas-wrap">
+    <div id="drop-hint">
+      <div class="icon">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      </div>
+      <p><strong>Drop photos here</strong><br>or use "Add Photo" above</p>
+    </div>
+  </div>
+
+  <aside id="panel">
+    <div class="panel-section">
+      <div class="panel-label">Layers</div>
+      <div id="layer-list">
+        <div id="no-layers">No photos yet</div>
+      </div>
+    </div>
+
+    <div class="panel-section" id="prop-section" style="display:none">
+      <div class="panel-label">Selected</div>
+      <div class="control-row">
+        <label>Opacity</label>
+        <span class="val" id="opacity-val">100%</span>
+      </div>
+      <input type="range" id="opacity-slider" min="10" max="100" value="100" oninput="setOpacity(this.value)">
+
+      <div class="control-row" style="margin-top:14px">
+        <label>Rotation</label>
+        <span class="val" id="rotation-val">0°</span>
+      </div>
+      <input type="range" id="rotation-slider" min="-180" max="180" value="0" oninput="setRotation(this.value)">
+
+      <div style="margin-top:14px">
+        <button class="btn" style="width:100%;justify-content:center" onclick="bringForward()">Bring Forward ↑</button>
+      </div>
+      <div style="margin-top:6px">
+        <button class="btn" style="width:100%;justify-content:center" onclick="sendBackward()">Send Backward ↓</button>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="panel-label">Canvas Background</div>
+      <div class="color-swatches" id="swatches">
+        <div class="swatch active" style="background:#111116" data-color="#111116" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#ffffff" data-color="#ffffff" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#1a1a2e" data-color="#1a1a2e" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#2d1b00" data-color="#2d1b00" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#0a2e0a" data-color="#0a2e0a" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#f5f0e8" data-color="#f5f0e8" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#1c0d20" data-color="#1c0d20" onclick="setBg(this)"></div>
+        <div class="swatch" style="background:#0d1c2e" data-color="#0d1c2e" onclick="setBg(this)"></div>
+      </div>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
+        <label style="font-size:0.7rem;color:var(--muted)">Custom:</label>
+        <input type="color" id="custom-bg" value="#111116" style="width:40px;height:24px;border:none;background:none;cursor:pointer;border-radius:4px" oninput="setCustomBg(this.value)">
+      </div>
+    </div>
+  </aside>
+</main>
+
+<div id="statusbar">
+  <span id="status-info">0 photos</span>
+  <span id="status-pos">—</span>
+</div>
+
+<input type="file" id="file-input" accept="image/*" multiple onchange="handleFiles(this.files)">
+
+<script>
+const wrap = document.getElementById('canvas-wrap');
+const dropHint = document.getElementById('drop-hint');
+const layerList = document.getElementById('layer-list');
+const noLayers = document.getElementById('no-layers');
+const propSection = document.getElementById('prop-section');
+const statusInfo = document.getElementById('status-info');
+const statusPos = document.getElementById('status-pos');
+
+let photos = [];
+let selected = null;
+let bgColor = '#111116';
+let zCounter = 1;
+
+// ─── DRAG & DROP FILES ────────────────────────────────
+wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('drag-over'); });
+wrap.addEventListener('dragleave', () => wrap.classList.remove('drag-over'));
+wrap.addEventListener('drop', e => {
+  e.preventDefault();
+  wrap.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+  [...files].forEach(file => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = e => addPhoto(e.target.result, file.name);
+    reader.readAsDataURL(file);
+  });
+}
+
+// ─── ADD PHOTO ────────────────────────────────────────
+function addPhoto(src, name) {
+  const img = new Image();
+  img.onload = () => {
+    const maxW = wrap.clientWidth * 0.45;
+    const maxH = wrap.clientHeight * 0.45;
+    let w = img.naturalWidth, h = img.naturalHeight;
+    const scale = Math.min(maxW / w, maxH / h, 1);
+    w = Math.round(w * scale); h = Math.round(h * scale);
+
+    const x = Math.random() * (wrap.clientWidth - w - 40) + 20;
+    const y = Math.random() * (wrap.clientHeight - h - 40) + 20;
+
+    const data = { src, name: name.replace(/\.[^.]+$/, ''), x, y, w, h, rot: 0, opacity: 1, z: zCounter++ };
+    photos.push(data);
+
+    const el = createPhotoEl(data);
+    wrap.appendChild(el);
+    data.el = el;
+
+    if (dropHint) dropHint.style.opacity = '0';
+    updateLayers();
+    selectPhoto(data);
+  };
+  img.src = src;
+}
+
+// ─── CREATE DOM ELEMENT ───────────────────────────────
+function createPhotoEl(data) {
+  const div = document.createElement('div');
+  div.className = 'photo-item';
+  div.style.left = data.x + 'px';
+  div.style.top = data.y + 'px';
+  div.style.width = data.w + 'px';
+  div.style.height = data.h + 'px';
+  div.style.zIndex = data.z;
+  div.style.opacity = data.opacity;
+  div.style.transform = `rotate(${data.rot}deg)`;
+
+  const frame = document.createElement('div');
+  frame.className = 'photo-frame';
+
+  const img = document.createElement('img');
+  img.src = data.src;
+  img.draggable = false;
+  frame.appendChild(img);
+
+  // delete btn
+  const del = document.createElement('button');
+  del.className = 'photo-delete';
+  del.innerHTML = '×';
+  del.title = 'Remove';
+  del.addEventListener('mousedown', e => { e.stopPropagation(); removePhoto(data); });
+
+  // resize handles
+  ['nw','ne','sw','se'].forEach(dir => {
+    const h = document.createElement('div');
+    h.className = `resize-handle ${dir}`;
+    h.addEventListener('mousedown', e => startResize(e, data, dir));
+    div.appendChild(h);
+  });
+
+  // rotate handle
+  const rot = document.createElement('div');
+  rot.className = 'rotate-handle';
+  rot.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>`;
+  rot.addEventListener('mousedown', e => startRotate(e, data));
+  div.appendChild(rot);
+
+  div.appendChild(frame);
+  div.appendChild(del);
+
+  // move
+  div.addEventListener('mousedown', e => {
+    if (e.target.classList.contains('resize-handle') || e.target.classList.contains('rotate-handle') || e.target.classList.contains('photo-delete')) return;
+    selectPhoto(data);
+    startMove(e, data);
+  });
+
+  return div;
+}
+
+// ─── SELECT ───────────────────────────────────────────
+function selectPhoto(data) {
+  if (selected) selected.el.classList.remove('selected');
+  selected = data;
+  if (data) {
+    data.el.classList.add('selected');
+    data.z = zCounter++;
+    data.el.style.zIndex = data.z;
+    propSection.style.display = '';
+    document.getElementById('opacity-slider').value = Math.round(data.opacity * 100);
+    document.getElementById('opacity-val').textContent = Math.round(data.opacity * 100) + '%';
+    document.getElementById('rotation-slider').value = data.rot;
+    document.getElementById('rotation-val').textContent = data.rot + '°';
+  } else {
+    propSection.style.display = 'none';
+  }
+  updateLayers();
+}
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target === wrap || e.target.id === 'canvas-wrap' || e.target === dropHint || e.target.tagName === 'P' || e.target.closest('#drop-hint')) {
+    selectPhoto(null);
+  }
+});
+
+// ─── MOVE ─────────────────────────────────────────────
+function startMove(e, data) {
+  e.preventDefault();
+  const ox = e.clientX - data.x, oy = e.clientY - data.y;
+  const onMove = ev => {
+    data.x = ev.clientX - ox;
+    data.y = ev.clientY - oy;
+    data.el.style.left = data.x + 'px';
+    data.el.style.top = data.y + 'px';
+    statusPos.textContent = `x:${Math.round(data.x)} y:${Math.round(data.y)}`;
+  };
+  const up = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', up); };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', up);
+}
+
+// ─── RESIZE ───────────────────────────────────────────
+function startResize(e, data, dir) {
+  e.preventDefault(); e.stopPropagation();
+  selectPhoto(data);
+  const startX = e.clientX, startY = e.clientY;
+  const startW = data.w, startH = data.h, startLeft = data.x, startTop = data.y;
+
+  const onMove = ev => {
+    const dx = ev.clientX - startX, dy = ev.clientY - startY;
+    let nw = startW, nh = startH, nx = startLeft, ny = startTop;
+
+    if (dir.includes('e')) nw = Math.max(80, startW + dx);
+    if (dir.includes('s')) nh = Math.max(60, startH + dy);
+    if (dir.includes('w')) { nw = Math.max(80, startW - dx); nx = startLeft + (startW - nw); }
+    if (dir.includes('n')) { nh = Math.max(60, startH - dy); ny = startTop + (startH - nh); }
+
+    data.w = nw; data.h = nh; data.x = nx; data.y = ny;
+    data.el.style.width = nw + 'px';
+    data.el.style.height = nh + 'px';
+    data.el.style.left = nx + 'px';
+    data.el.style.top = ny + 'px';
+    statusPos.textContent = `${Math.round(nw)}×${Math.round(nh)}`;
+  };
+  const up = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', up); };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', up);
+}
+
+// ─── ROTATE ───────────────────────────────────────────
+function startRotate(e, data) {
+  e.preventDefault(); e.stopPropagation();
+  const rect = data.el.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+  const startAngle = Math.atan2(e.clientY - cy, e.clientX - cx) * 180 / Math.PI;
+  const startRot = data.rot;
+
+  const onMove = ev => {
+    const a = Math.atan2(ev.clientY - cy, ev.clientX - cx) * 180 / Math.PI;
+    data.rot = Math.round(startRot + a - startAngle);
+    data.el.style.transform = `rotate(${data.rot}deg)`;
+    document.getElementById('rotation-slider').value = Math.max(-180, Math.min(180, data.rot));
+    document.getElementById('rotation-val').textContent = data.rot + '°';
+  };
+  const up = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', up); };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', up);
+}
+
+// ─── CONTROLS ─────────────────────────────────────────
+function setOpacity(v) {
+  if (!selected) return;
+  selected.opacity = v / 100;
+  selected.el.style.opacity = selected.opacity;
+  document.getElementById('opacity-val').textContent = v + '%';
+}
+
+function setRotation(v) {
+  if (!selected) return;
+  selected.rot = parseInt(v);
+  selected.el.style.transform = `rotate(${selected.rot}deg)`;
+  document.getElementById('rotation-val').textContent = v + '°';
+}
+
+function bringForward() {
+  if (!selected) return;
+  selected.z = zCounter++;
+  selected.el.style.zIndex = selected.z;
+}
+
+function sendBackward() {
+  if (!selected) return;
+  selected.z = Math.max(1, selected.z - 2);
+  selected.el.style.zIndex = selected.z;
+}
+
+// ─── REMOVE ───────────────────────────────────────────
+function removePhoto(data) {
+  data.el.remove();
+  photos = photos.filter(p => p !== data);
+  if (selected === data) selectPhoto(null);
+  updateLayers();
+  if (photos.length === 0 && dropHint) dropHint.style.opacity = '1';
+}
+
+function clearCanvas() {
+  photos.forEach(p => p.el.remove());
+  photos = [];
+  selectPhoto(null);
+  updateLayers();
+  if (dropHint) dropHint.style.opacity = '1';
+}
+
+// ─── LAYERS PANEL ─────────────────────────────────────
+function updateLayers() {
+  layerList.innerHTML = '';
+  if (photos.length === 0) {
+    layerList.innerHTML = '<div id="no-layers">No photos yet</div>';
+    statusInfo.textContent = '0 photos';
+    return;
+  }
+  statusInfo.textContent = photos.length + ' photo' + (photos.length !== 1 ? 's' : '');
+
+  [...photos].reverse().forEach(data => {
+    const item = document.createElement('div');
+    item.className = 'layer-item' + (data === selected ? ' active' : '');
+    item.innerHTML = `<img class="layer-thumb" src="${data.src}" alt=""><span class="layer-name">${data.name}</span>`;
+    item.addEventListener('click', () => selectPhoto(data));
+    layerList.appendChild(item);
+  });
+}
+
+// ─── BG COLOR ─────────────────────────────────────────
+function setBg(el) {
+  bgColor = el.dataset.color;
+  wrap.style.background = bgColor;
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('custom-bg').value = bgColor;
+}
+
+function setCustomBg(color) {
+  bgColor = color;
+  wrap.style.background = color;
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+}
+
+// ─── SAVE ─────────────────────────────────────────────
+function saveCanvas() {
+  const prevSelected = selected;
+  // Deselect to hide handles
+  if (selected) selected.el.classList.remove('selected');
+
+  const canvas = document.createElement('canvas');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = wrap.clientWidth * dpr;
+  canvas.height = wrap.clientHeight * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Background
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+
+  // Sort photos by z-index
+  const sorted = [...photos].sort((a, b) => a.z - b.z);
+
+  const drawAll = (i) => {
+    if (i >= sorted.length) {
+      // Restore selection
+      if (prevSelected) prevSelected.el.classList.add('selected');
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'canvasboard.png';
+        a.click();
+        URL.revokeObjectURL(url);
+      }, 'image/png');
+      return;
+    }
+
+    const data = sorted[i];
+    const img = new Image();
+    img.onload = () => {
+      ctx.save();
+      const cx = data.x + data.w / 2, cy = data.y + data.h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(data.rot * Math.PI / 180);
+      ctx.globalAlpha = data.opacity;
+      ctx.drawImage(img, -data.w / 2, -data.h / 2, data.w, data.h);
+      ctx.restore();
+      drawAll(i + 1);
+    };
+    img.src = data.src;
+  };
+
+  drawAll(0);
+}
+
+// ─── KEYBOARD ─────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (!selected) return;
+  const step = e.shiftKey ? 10 : 1;
+  if (e.key === 'ArrowLeft') { selected.x -= step; selected.el.style.left = selected.x + 'px'; }
+  if (e.key === 'ArrowRight') { selected.x += step; selected.el.style.left = selected.x + 'px'; }
+  if (e.key === 'ArrowUp') { selected.y -= step; selected.el.style.top = selected.y + 'px'; }
+  if (e.key === 'ArrowDown') { selected.y += step; selected.el.style.top = selected.y + 'px'; }
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    const target = e.target;
+    if (target.tagName !== 'INPUT') removePhoto(selected);
+  }
+  if (e.key === 'Escape') selectPhoto(null);
+});
+</script>
+</body>
+</html>
