@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=0."5>
+<meta name="viewport" content="width=device-width, initial-scale=0.5">
 <title>Canvas Photo Board</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <style>
@@ -891,29 +891,58 @@ function setCustomBg(color) {
   document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
 }
 
-// ─── SAVE ─────────────────────────────────────────────
+// ─── SAVE (auto-crop to content bounds) ───────────────
+function getRotatedCorners(data) {
+  const cx = data.x + data.w / 2, cy = data.y + data.h / 2;
+  const rad = data.rot * Math.PI / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const hw = data.w / 2, hh = data.h / 2;
+  // Four corners relative to center, then rotated
+  return [
+    [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
+  ].map(([lx, ly]) => ({
+    x: cx + lx * cos - ly * sin,
+    y: cy + lx * sin + ly * cos
+  }));
+}
+
 function saveCanvas() {
+  if (photos.length === 0) return;
+
+  const PAD = 16; // padding around content in pixels
+
+  // Compute tight bounding box across all rotated photos
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  photos.forEach(data => {
+    getRotatedCorners(data).forEach(({ x, y }) => {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    });
+  });
+
+  minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
+  const cropW = maxX - minX, cropH = maxY - minY;
+
   const prevSelected = selected;
-  // Deselect to hide handles
   if (selected) selected.el.classList.remove('selected');
 
-  const canvas = document.createElement('canvas');
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = wrap.clientWidth * dpr;
-  canvas.height = wrap.clientHeight * dpr;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(cropW * dpr);
+  canvas.height = Math.round(cropH * dpr);
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
 
   // Background
   ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+  ctx.fillRect(0, 0, cropW, cropH);
 
-  // Sort photos by z-index
   const sorted = [...photos].sort((a, b) => a.z - b.z);
 
   const drawAll = (i) => {
     if (i >= sorted.length) {
-      // Restore selection
       if (prevSelected) prevSelected.el.classList.add('selected');
       canvas.toBlob(blob => {
         const url = URL.createObjectURL(blob);
@@ -930,7 +959,9 @@ function saveCanvas() {
     const img = new Image();
     img.onload = () => {
       ctx.save();
-      const cx = data.x + data.w / 2, cy = data.y + data.h / 2;
+      // Offset by crop origin so content starts at (PAD, PAD)
+      const cx = (data.x + data.w / 2) - minX;
+      const cy = (data.y + data.h / 2) - minY;
       ctx.translate(cx, cy);
       ctx.rotate(data.rot * Math.PI / 180);
       ctx.globalAlpha = data.opacity;
