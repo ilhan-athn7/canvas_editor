@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=0.5">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Canvas Photo Board</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap" rel="stylesheet">
 <style>
@@ -685,8 +685,9 @@ function attachPhotoPointers(div, data) {
       const currA = pAngle(c0, c1);
       const dRot = currA - startA;
 
+      // Scale both dimensions uniformly (aspect ratio preserved)
       data.w = Math.max(60, Math.round(snap.w * scale));
-      data.h = Math.max(60, Math.round(snap.h * scale));
+      data.h = Math.max(40, Math.round(snap.h * scale));
       data.rot = Math.round(snap.rot + dRot);
 
       // Move by midpoint delta
@@ -749,21 +750,50 @@ wrap.addEventListener('pointerdown', e => {
   }
 });
 
-// ─── RESIZE (handle drag) ─────────────────────────────
+// ─── RESIZE (handle drag, aspect-ratio locked) ────────
 function startResize(e, data, dir, handle) {
   selectPhoto(data);
   const startX = e.clientX, startY = e.clientY;
   const startW = data.w, startH = data.h, startLeft = data.x, startTop = data.y;
+  const aspect = startW / startH;
 
   function onMove(ev) {
     if (ev.pointerId !== e.pointerId) return;
     const dx = ev.clientX - startX, dy = ev.clientY - startY;
-    let nw = startW, nh = startH, nx = startLeft, ny = startTop;
 
-    if (dir.includes('e')) nw = Math.max(60, startW + dx);
-    if (dir.includes('s')) nh = Math.max(60, startH + dy);
-    if (dir.includes('w')) { nw = Math.max(60, startW - dx); nx = startLeft + (startW - nw); }
-    if (dir.includes('n')) { nh = Math.max(60, startH - dy); ny = startTop + (startH - nh); }
+    // Use the axis with the larger absolute delta, then derive the other
+    let nw, nh, nx = startLeft, ny = startTop;
+
+    if (dir.includes('e') || dir.includes('w')) {
+      const rawDx = dir.includes('e') ? dx : -dx;
+      nw = Math.max(60, startW + rawDx);
+      nh = nw / aspect;
+    } else {
+      const rawDy = dir.includes('s') ? dy : -dy;
+      nh = Math.max(40, startH + rawDy);
+      nw = nh * aspect;
+    }
+
+    // For corners, pick the dominant axis
+    if (dir.includes('e') || dir.includes('w')) {
+      // already set above
+    }
+    if ((dir.includes('n') || dir.includes('s')) && (dir.includes('e') || dir.includes('w'))) {
+      // Corner: use whichever axis moved more
+      const rawDx = dir.includes('e') ? dx : -dx;
+      const rawDy = dir.includes('s') ? dy : -dy;
+      if (Math.abs(rawDx) >= Math.abs(rawDy)) {
+        nw = Math.max(60, startW + rawDx);
+        nh = nw / aspect;
+      } else {
+        nh = Math.max(40, startH + rawDy);
+        nw = nh * aspect;
+      }
+    }
+
+    // Anchor opposite edge
+    if (dir.includes('w')) nx = startLeft + (startW - nw);
+    if (dir.includes('n')) ny = startTop + (startH - nh);
 
     data.w = nw; data.h = nh; data.x = nx; data.y = ny;
     data.el.style.width = nw + 'px';
